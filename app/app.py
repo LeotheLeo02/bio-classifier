@@ -15,5 +15,6 @@ class ClassifyResponse(BaseModel):
 async def classify(req: ClassifyRequest):
     payload = [{"username": str(i), "bio": b} for i, b in enumerate(req.bios)]
     classified = classify_profiles(payload)
+    print(classified)
     flags = [row["is_christian"] for row in classified]
     return {"results": flags}
