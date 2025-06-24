@@ -60,9 +60,14 @@ def classify_profiles(profile_data, model: str = "gpt-4.1-mini"):
 
     if unsure_bios:
         prompt = (
-            "Classify each numbered Instagram bio below as yes or no "
-            "(Christian affiliation detected). "
-            "Return a space‑separated list of 'yes' or 'no' in the same order."
+            "For each numbered Instagram bio below answer **yes** or **no**.\n"
+            "Say **yes** **only** when BOTH of the following are true:\n"
+            "  1. The bio clearly belongs to a *student* (college).\n"
+            "     - clues: “class of 2027”, “’28”, “freshman”, “senior”, etc.\n"
+            "  2. The bio contains an explicit Christian signal (e.g. Jesus, Christ, ✝️, Bible verse).\n"
+            "All other cases – including churches, ministries, businesses, adults, or students without\n"
+            "Christian references – must be **no**.\n"
+            "Return one space-separated list of yes/no in the same order."
         )
         payload = "\n".join(f"{i+1}) {b}" for i, b in enumerate(unsure_bios))
         try:
