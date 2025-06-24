@@ -33,30 +33,18 @@ def classify_profiles(profile_data, model: str = "gpt-4.1-mini"):
     Adds 'is_christian' = 'yes' / 'no' to each dict in `profile_data`.
     Uses fast keyword heuristics first, then batches uncertain bios to GPT.
     """
-    definite = []        # (username, flag)
-    unsure_bios = []     # bios queued for GPT
-    order = []           # usernames in GPT order
+    unsure_bios = []
+    order = []
 
     for item in profile_data:
         uname = item["username"]
         bio = (item["bio"] or "").strip()
-        bio_lc = bio.lower()
-
-        if not bio:
-            definite.append((uname, "no"))
-            continue
-
-        if any(k in bio_lc for k in QUICK_KEYWORDS) or BIBLE_PATTERN.search(bio):
-            definite.append((uname, "yes"))
-            continue
-
-        # possible hit → send to GPT
         clean = re.sub(r"[^\w\s]", " ", bio).strip()
         order.append(uname)
         unsure_bios.append(clean)
 
     # map of username → flag
-    verdicts = {u: f for u, f in definite}
+    verdicts = {}
 
     if unsure_bios:
         prompt = (
