@@ -1,8 +1,9 @@
 import re
+import os
 from openai import OpenAI
 
 # ---------- classification constants & helpers ----------
-client = OpenAI()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 CHRISTIAN_WORDS = {
     "jesus", "christ", "christian", "god", "lord", "bible",
