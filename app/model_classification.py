@@ -29,7 +29,7 @@ BIBLE_PATTERN = re.compile(r"\b(" + "|".join(BIBLE_BOOKS) + r")(?:'s|s)?\b", re.
 # quick single‑word flags
 QUICK_KEYWORDS = {"†", "cross", "amen", "agtg", "jesusfreak", "bibleverse"} | CHRISTIAN_WORDS | BIBLE_BOOKS
 
-def classify_profiles(profile_data, model: str = "gpt-4.1-mini"):
+def classify_profiles(profile_data, model: str = "gpt-4.1"):
     """
     Adds 'is_christian' = 'yes' / 'no' to each dict in `profile_data`.
     Uses fast keyword heuristics first, then batches uncertain bios to GPT.
