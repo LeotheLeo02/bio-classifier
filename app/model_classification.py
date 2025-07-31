@@ -1,11 +1,87 @@
 import os
 import re
+import json
+from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 # ---------- classification constants & helpers ----------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Default classification prompt - can be updated via API
+DEFAULT_CLASSIFICATION_PROMPT = (
+    "For each numbered Instagram bio below, reply **yes** or **no**.\n"
+    "\n"
+    "**Say yes** if the bio contains an explicit Christian signal – e.g. the words Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), ✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
+    "Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), "
+    "✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
+    "\n"
+    "If the bio does **not** clearly show Christian affiliation, reply **no**.\n"
+    "\n"
+    "Return a single space-separated list of yes/no in the same order as the bios."
+)
+
+# File path for storing the prompt
+PROMPT_FILE_PATH = Path(__file__).parent.parent / "data" / "classification_prompt.json"
+
+def _ensure_data_directory():
+    """Ensure the data directory exists"""
+    PROMPT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def _load_prompt_from_file() -> str:
+    """Load the prompt from the persistent file"""
+    try:
+        if PROMPT_FILE_PATH.exists():
+            with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('prompt', DEFAULT_CLASSIFICATION_PROMPT)
+        else:
+            print(f"ℹ️ No saved prompt found at {PROMPT_FILE_PATH}, using default")
+            return DEFAULT_CLASSIFICATION_PROMPT
+    except Exception as e:
+        print(f"⚠️ Error loading prompt from file: {e}, using default")
+        return DEFAULT_CLASSIFICATION_PROMPT
+
+def _save_prompt_to_file(prompt: str) -> bool:
+    """Save the prompt to the persistent file"""
+    try:
+        _ensure_data_directory()
+        data = {
+            'prompt': prompt,
+            'last_updated': str(Path(__file__).stat().st_mtime)  # Simple timestamp
+        }
+        with open(PROMPT_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"✅ Prompt saved to {PROMPT_FILE_PATH}")
+        return True
+    except Exception as e:
+        print(f"❌ Error saving prompt to file: {e}")
+        return False
+
+# Initialize the prompt from file or default
+_current_prompt = _load_prompt_from_file()
+
+def get_classification_prompt() -> str:
+    """Get the current classification prompt"""
+    return _current_prompt
+
+def update_classification_prompt(new_prompt: str) -> str:
+    """Update the classification prompt and persist it"""
+    global _current_prompt
+    _current_prompt = new_prompt
+    
+    # Save to file for persistence
+    if _save_prompt_to_file(new_prompt):
+        print("✅ Classification prompt updated and persisted")
+    else:
+        print("⚠️ Classification prompt updated but failed to persist")
+    
+    return _current_prompt
+
+def reset_to_default_prompt() -> str:
+    """Reset the prompt to the default and persist it"""
+    return update_classification_prompt(DEFAULT_CLASSIFICATION_PROMPT)
 
 CHRISTIAN_WORDS = {
     "jesus", "christ", "christian", "god", "lord", "bible",
@@ -65,17 +141,7 @@ def classify_profiles(profile_data, model: str = "gpt-4.1-mini"):
         print(f"🔍 Quick check found {len(profile_data) - len(unsure_bios)} obvious matches")
         print(f"🤔 Sending {len(unsure_bios)} uncertain bios to LLM for analysis")
         
-        prompt = (
-            "For each numbered Instagram bio below, reply **yes** or **no**.\n"
-            "\n"
-            "**Say yes** if the bio contains an explicit Christian signal – e.g. the words Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), ✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
-            "Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), "
-            "✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
-            "\n"
-            "If the bio does **not** clearly show Christian affiliation, reply **no**.\n"
-            "\n"
-            "Return a single space-separated list of yes/no in the same order as the bios."
-        )
+        prompt = get_classification_prompt()
         payload = "\n".join(f"{i+1}) {b}" for i, b in enumerate(unsure_bios))
         try:
             resp = client.chat.completions.create(
