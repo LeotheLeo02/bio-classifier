@@ -2,12 +2,21 @@ import os
 import re
 import json
 from pathlib import Path
+from typing import Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 # ---------- classification constants & helpers ----------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Environment-configurable defaults
+CLASSIFY_MODEL_DEFAULT = os.getenv("CLASSIFY_MODEL", "gpt-5-mini")
+CLASSIFY_REASONING_EFFORT_DEFAULT = os.getenv("CLASSIFY_REASONING_EFFORT")  # minimal|low|medium|high
+CLASSIFY_VERBOSITY_DEFAULT = os.getenv("CLASSIFY_VERBOSITY")  # low|medium|high
+
+_ALLOWED_EFFORT = {"minimal", "low", "medium", "high"}
+_ALLOWED_VERBOSITY = {"low", "medium", "high"}
 
 # Default classification prompt - can be updated via API
 DEFAULT_CLASSIFICATION_PROMPT = (
@@ -107,7 +116,12 @@ BIBLE_PATTERN = re.compile(r"\b(" + "|".join(BIBLE_BOOKS) + r")(?:'s|s)?\b", re.
 # quick single‑word flags
 QUICK_KEYWORDS = {"†", "cross", "amen", "agtg", "jesusfreak", "bibleverse"} | CHRISTIAN_WORDS | BIBLE_BOOKS
 
-def classify_profiles(profile_data, model: str = "gpt-4.1"):
+def classify_profiles(
+    profile_data,
+    model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
+):
     """
     Adds 'is_christian' = 'yes' / 'no' to each dict in `profile_data`.
     Uses fast keyword heuristics first, then batches uncertain bios to GPT.
@@ -144,15 +158,49 @@ def classify_profiles(profile_data, model: str = "gpt-4.1"):
         prompt = get_classification_prompt()
         payload = "\n".join(f"{i+1}) {b}" for i, b in enumerate(unsure_bios))
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": payload},
-                ],
-            )
+            # Resolve configuration from parameters or environment
+            selected_model = (model or CLASSIFY_MODEL_DEFAULT).strip()
+            effort = (reasoning_effort or CLASSIFY_REASONING_EFFORT_DEFAULT)
+            effort = effort.lower().strip() if isinstance(effort, str) else None
+            if effort not in _ALLOWED_EFFORT:
+                effort = None
+
+            verb = (verbosity or CLASSIFY_VERBOSITY_DEFAULT)
+            verb = verb.lower().strip() if isinstance(verb, str) else None
+            if verb not in _ALLOWED_VERBOSITY:
+                verb = None
+
+            request_kwargs = {
+                "model": selected_model,
+                # Combine instructions and payload for the Responses API input
+                "input": f"{prompt}\n\n{payload}",
+            }
+            if effort:
+                request_kwargs["reasoning"] = {"effort": effort}
+            if verb:
+                request_kwargs["text"] = {"verbosity": verb}
+
+            resp = client.responses.create(**request_kwargs)
             print(f"✅ OpenAI OK — model {resp.model}")
-            flags = resp.choices[0].message.content.strip().split()
+
+            # Extract plain text output from Responses API
+            output_text = (getattr(resp, "output_text", None) or "").strip()
+            if not output_text:
+                # Fallback: attempt to reconstruct from output items if needed
+                try:
+                    output_items = getattr(resp, "output", [])
+                    chunks = []
+                    for item in output_items or []:
+                        content = item.get("content") if isinstance(item, dict) else None
+                        if isinstance(content, list):
+                            for c in content:
+                                if isinstance(c, dict) and c.get("type") == "output_text":
+                                    chunks.append(c.get("text", ""))
+                    output_text = "".join(chunks).strip()
+                except Exception:
+                    output_text = ""
+
+            flags = (output_text or "").strip().split()
             
             # Validate length
             if len(flags) != len(unsure_bios):
