@@ -1,7 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
-from app.model_classification import classify_profiles, get_classification_prompt, update_classification_prompt, reset_to_default_prompt
+from app.model_classification import (
+    classify_profiles,
+    get_classification_prompt,
+    update_classification_prompt,
+    reset_to_default_prompt,
+    get_editable_criteria,
+)
 
 app = FastAPI(title="Bio-Classifier")
 
@@ -12,7 +18,7 @@ class ClassifyResponse(BaseModel):
     results: List[str]
 
 class PromptUpdateRequest(BaseModel):
-    prompt: str
+    criteria: str
 
 class PromptResponse(BaseModel):
     prompt: str
@@ -29,10 +35,14 @@ async def get_prompt():
     prompt = get_classification_prompt()
     return {"prompt": prompt}
 
+@app.get("/criteria")
+async def get_criteria():
+    return {"criteria": get_editable_criteria()}
+
 @app.put("/prompt", response_model=PromptResponse)
 async def update_prompt(req: PromptUpdateRequest):
-    """Update the classification prompt"""
-    updated_prompt = update_classification_prompt(req.prompt)
+    """Update only the editable criteria; boilerplate is fixed server-side."""
+    updated_prompt = update_classification_prompt(req.criteria)
     return {"prompt": updated_prompt}
 
 @app.post("/prompt/reset", response_model=PromptResponse)

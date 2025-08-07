@@ -18,17 +18,19 @@ CLASSIFY_VERBOSITY_DEFAULT = os.getenv("CLASSIFY_VERBOSITY")  # low|medium|high
 _ALLOWED_EFFORT = {"minimal", "low", "medium", "high"}
 _ALLOWED_VERBOSITY = {"low", "medium", "high"}
 
-# Default classification prompt - can be updated via API
-DEFAULT_CLASSIFICATION_PROMPT = (
-    "For each numbered Instagram bio below, reply **yes** or **no**.\n"
-    "\n"
-    "**Say yes** if the bio contains an explicit Christian signal – e.g. the words Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), ✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
-    "Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), "
-    "✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
-    "\n"
-    "If the bio does **not** clearly show Christian affiliation, reply **no**.\n"
-    "\n"
+# Boilerplate prompt: header/footer are immutable; only criteria text is user-editable
+DEFAULT_PROMPT_HEADER = (
+    "For each numbered Instagram bio below, reply **yes** or **no**.\n\n"
+)
+DEFAULT_PROMPT_FOOTER = (
+    "\nIf the bio does **not** clearly show no affiliation with what we desire, reply **no**.\n\n"
     "Return a single space-separated list of yes/no in the same order as the bios."
+)
+
+# Default editable criteria text
+DEFAULT_CRITERIA_TEXT = (
+    "**Say yes** if the bio contains an explicit Christian signal – e.g. the words Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), ✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
+    "Jesus, Christ, Christian, Bible, a Scripture reference (John 3:16, 1 Cor 13:4-8, etc.), ✝️ cross emoji, 'saved by grace', 'follower of Christ', or similar.\n"
 )
 
 # File path for storing the prompt
@@ -38,26 +40,34 @@ def _ensure_data_directory():
     """Ensure the data directory exists"""
     PROMPT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+def _build_full_prompt(criteria_text: str) -> str:
+    return f"{DEFAULT_PROMPT_HEADER}{criteria_text}\n{DEFAULT_PROMPT_FOOTER}"
+
 def _load_prompt_from_file() -> str:
-    """Load the prompt from the persistent file"""
+    """Load the FULL prompt (header + criteria + footer)."""
     try:
         if PROMPT_FILE_PATH.exists():
             with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return data.get('prompt', DEFAULT_CLASSIFICATION_PROMPT)
+                if 'criteria' in data:
+                    return _build_full_prompt(data['criteria'])
+                if 'prompt' in data:
+                    # Legacy support
+                    return data['prompt']
+                return _build_full_prompt(DEFAULT_CRITERIA_TEXT)
         else:
             print(f"ℹ️ No saved prompt found at {PROMPT_FILE_PATH}, using default")
-            return DEFAULT_CLASSIFICATION_PROMPT
+            return _build_full_prompt(DEFAULT_CRITERIA_TEXT)
     except Exception as e:
         print(f"⚠️ Error loading prompt from file: {e}, using default")
-        return DEFAULT_CLASSIFICATION_PROMPT
+        return _build_full_prompt(DEFAULT_CRITERIA_TEXT)
 
-def _save_prompt_to_file(prompt: str) -> bool:
-    """Save the prompt to the persistent file"""
+def _save_criteria_to_file(criteria_text: str) -> bool:
+    """Persist only the editable criteria to disk."""
     try:
         _ensure_data_directory()
         data = {
-            'prompt': prompt,
+            'criteria': criteria_text,
             'last_updated': str(Path(__file__).stat().st_mtime)  # Simple timestamp
         }
         with open(PROMPT_FILE_PATH, 'w', encoding='utf-8') as f:
@@ -68,29 +78,38 @@ def _save_prompt_to_file(prompt: str) -> bool:
         print(f"❌ Error saving prompt to file: {e}")
         return False
 
-# Initialize the prompt from file or default
 _current_prompt = _load_prompt_from_file()
+_current_criteria = DEFAULT_CRITERIA_TEXT
+try:
+    if PROMPT_FILE_PATH.exists():
+        with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            _current_criteria = data.get('criteria', DEFAULT_CRITERIA_TEXT)
+except Exception:
+    _current_criteria = DEFAULT_CRITERIA_TEXT
 
 def get_classification_prompt() -> str:
     """Get the current classification prompt"""
     return _current_prompt
 
-def update_classification_prompt(new_prompt: str) -> str:
-    """Update the classification prompt and persist it"""
-    global _current_prompt
-    _current_prompt = new_prompt
-    
-    # Save to file for persistence
-    if _save_prompt_to_file(new_prompt):
-        print("✅ Classification prompt updated and persisted")
+def get_editable_criteria() -> str:
+    """Return only the editable criteria portion for UI editing."""
+    return _current_criteria
+
+def update_classification_prompt(new_criteria: str) -> str:
+    """Update only the editable criteria; rebuild and persist the full prompt."""
+    global _current_prompt, _current_criteria
+    _current_criteria = new_criteria
+    _current_prompt = _build_full_prompt(_current_criteria)
+    if _save_criteria_to_file(_current_criteria):
+        print("✅ Classification criteria updated and persisted")
     else:
-        print("⚠️ Classification prompt updated but failed to persist")
-    
+        print("⚠️ Criteria updated but failed to persist")
     return _current_prompt
 
 def reset_to_default_prompt() -> str:
-    """Reset the prompt to the default and persist it"""
-    return update_classification_prompt(DEFAULT_CLASSIFICATION_PROMPT)
+    """Reset criteria to default (boilerplate remains fixed)."""
+    return update_classification_prompt(DEFAULT_CRITERIA_TEXT)
 
 CHRISTIAN_WORDS = {
     "jesus", "christ", "christian", "god", "lord", "bible",
@@ -206,6 +225,11 @@ def classify_profiles(
             if len(flags) != len(unsure_bios):
                 print(f"⚠️ Length mismatch: got {len(flags)}, expected {len(unsure_bios)}")
                 flags = ["no"] * len(unsure_bios)  # Default to no for mismatched results
+            # Enforce backend rule: only explicit 'yes' counts as yes; everything else => 'no'
+            flags = [
+                "yes" if isinstance(f, str) and f.strip().lower().startswith("y") else "no"
+                for f in flags
+            ]
                 
         except Exception as e:
             print(f"❗️GPT batch failed ({type(e).__name__}: {e}); using no for all uncertain bios.")
