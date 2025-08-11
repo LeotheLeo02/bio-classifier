@@ -13,6 +13,7 @@ app = FastAPI(title="Bio-Classifier")
 
 class ClassifyRequest(BaseModel):
     bios: List[str]
+    criteria: str | None = None
 
 class ClassifyResponse(BaseModel):
     results: List[str]
@@ -26,7 +27,22 @@ class PromptResponse(BaseModel):
 @app.post("/classify", response_model=ClassifyResponse)
 async def classify(req: ClassifyRequest):
     payload = [{"username": str(i), "bio": b} for i, b in enumerate(req.bios)]
-    flags = classify_profiles(payload)
+    # If per-request criteria is provided, temporarily override for this call only
+    if req.criteria and isinstance(req.criteria, str) and req.criteria.strip():
+        print(f"🧪 [DEBUG] Using per-request criteria for /classify (chars={len(req.criteria)})")
+        from app import model_classification as mc
+        original_criteria = mc._current_criteria
+        original_prompt = mc._current_prompt
+        try:
+            mc._current_criteria = req.criteria
+            mc._current_prompt = mc._build_full_prompt(req.criteria)
+            flags = classify_profiles(payload)
+        finally:
+            mc._current_criteria = original_criteria
+            mc._current_prompt = original_prompt
+    else:
+        print("ℹ️ [DEBUG] /classify using default server criteria")
+        flags = classify_profiles(payload)
     return {"results": flags}
 
 @app.get("/prompt", response_model=PromptResponse)
