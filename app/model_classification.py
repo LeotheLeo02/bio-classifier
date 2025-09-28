@@ -111,30 +111,6 @@ def reset_to_default_prompt() -> str:
     """Reset criteria to default (boilerplate remains fixed)."""
     return update_classification_prompt(DEFAULT_CRITERIA_TEXT)
 
-CHRISTIAN_WORDS = {
-    "jesus", "christ", "christian", "god", "lord", "bible",
-    "believer", "disciple", "faith", "saved", "born again",
-    "church", "worship"
-}
-
-BIBLE_BOOKS = {
-    "genesis","exodus","leviticus","numbers","deuteronomy",
-    "joshua","judges","ruth","samuel","kings","chronicles","ezra","nehemiah","esther",
-    "job","psalm","psalms","proverbs","ecclesiastes","song","songs","canticles",
-    "isaiah","jeremiah","lamentations","ezekiel","daniel",
-    "hosea","joel","amos","obadiah","jonah","micah","nahum",
-    "habakkuk","zephaniah","haggai","zechariah","malachi",
-    "matthew","mark","luke","john","acts","romans",
-    "corinthians","galatians","ephesians","philippians","colossians",
-    "thessalonians","timothy","titus","philemon","hebrews",
-    "james","peter","jude","revelation","rev"
-}
-
-BIBLE_PATTERN = re.compile(r"\b(" + "|".join(BIBLE_BOOKS) + r")(?:'s|s)?\b", re.I)
-
-# quick single‑word flags
-QUICK_KEYWORDS = {"†", "cross", "amen", "agtg", "jesusfreak", "bibleverse"} | CHRISTIAN_WORDS | BIBLE_BOOKS
-
 def classify_profiles(
     profile_data,
     model: Optional[str] = None,
@@ -143,39 +119,26 @@ def classify_profiles(
 ):
     """
     Adds 'is_christian' = 'yes' / 'no' to each dict in `profile_data`.
-    Uses fast keyword heuristics first, then batches uncertain bios to GPT.
+    Sends every bio to GPT for classification.
     """
-    # Stage 1: Quick keyword check
-    quick_results = {}
-    unsure_bios = []
-    unsure_indices = []
-    
+    all_bios = []
+    all_indices = []
+
     for i, item in enumerate(profile_data):
-        uname = item["username"]
         bio = (item["bio"] or "").strip()
         clean = re.sub(r"[^\w\s]", " ", bio).strip()
-        
-        # Check for obvious Christian keywords
-        has_christian_keywords = (
-            any(k in bio.lower() for k in QUICK_KEYWORDS) or 
-            BIBLE_PATTERN.search(bio)
-        )
-        
-        if has_christian_keywords:
-            quick_results[uname] = "yes"
-        else:
-            # No obvious keywords found - need LLM analysis
-            unsure_bios.append(clean)
-            unsure_indices.append(i)
-            quick_results[uname] = "no"  # Default to no, will be updated by LLM
 
-    # Stage 2: LLM classification for uncertain bios
-    if unsure_bios:
-        print(f"🔍 Quick check found {len(profile_data) - len(unsure_bios)} obvious matches")
-        print(f"🤔 Sending {len(unsure_bios)} uncertain bios to LLM for analysis")
-        
+        all_bios.append(clean)
+        all_indices.append(i)
+
+    results = {}
+
+    # LLM classification for all bios
+    if all_bios:
+        print(f"🤔 Sending {len(all_bios)} bios to LLM for analysis")
+
         prompt = get_classification_prompt()
-        payload = "\n".join(f"{i+1}) {b}" for i, b in enumerate(unsure_bios))
+        payload = "\n".join(f"{i+1}) {b}" for i, b in enumerate(all_bios))
         try:
             # Resolve configuration from parameters or environment
             selected_model = (model or CLASSIFY_MODEL_DEFAULT).strip()
@@ -222,9 +185,9 @@ def classify_profiles(
             flags = (output_text or "").strip().split()
             
             # Validate length
-            if len(flags) != len(unsure_bios):
-                print(f"⚠️ Length mismatch: got {len(flags)}, expected {len(unsure_bios)}")
-                flags = ["no"] * len(unsure_bios)  # Default to no for mismatched results
+            if len(flags) != len(all_bios):
+                print(f"⚠️ Length mismatch: got {len(flags)}, expected {len(all_bios)}")
+                flags = ["no"] * len(all_bios)  # Default to no for mismatched results
             # Enforce backend rule: only explicit 'yes' counts as yes; everything else => 'no'
             flags = [
                 "yes" if isinstance(f, str) and f.strip().lower().startswith("y") else "no"
@@ -233,17 +196,18 @@ def classify_profiles(
                 
         except Exception as e:
             print(f"❗️GPT batch failed ({type(e).__name__}: {e}); using no for all uncertain bios.")
-            flags = ["no"] * len(unsure_bios)
+            flags = ["no"] * len(all_bios)
 
-        # Update results for uncertain bios
+        # Update results for bios
         for i, flag in enumerate(flags):
-            original_index = unsure_indices[i]
+            original_index = all_indices[i]
             username = profile_data[original_index]["username"]
-            quick_results[username] = flag.lower()
+            results[username] = flag.lower()
 
-    # attach the flag onto each item
+    # Default any remaining to "no"
     for item in profile_data:
-        item["is_christian"] = quick_results.get(item["username"], "no")
+        username = item["username"]
+        item["is_christian"] = results.get(username, "no")
 
     return [i["username"] for i in profile_data
                     if i["is_christian"] == "yes"]
